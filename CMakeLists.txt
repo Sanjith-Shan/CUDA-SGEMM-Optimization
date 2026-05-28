@@ -22,3 +22,7 @@ find_package(CUDAToolkit REQUIRED)
 add_executable(sgemm src/sgemm/sgemm.cu)
 target_link_libraries(sgemm PRIVATE CUDA::cublas)
 set_target_properties(sgemm PROPERTIES CUDA_SEPARABLE_COMPILATION ON)
+
+# Fused kernels (benchmarked against PyTorch by bench/bench_fused.py).
+add_executable(softmax src/fused/softmax.cu)
+add_executable(layernorm src/fused/layernorm.cu)

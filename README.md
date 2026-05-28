@@ -68,6 +68,35 @@ too few to fill the A100's 108 SMs, so the larger tiles lose to occupancy. This 
 expected small-matrix tail behavior, not a regression — the optimizations are designed
 to pay off on large matrices, which is exactly where the headline 4096 number sits.
 
+## Fused kernels: softmax & layernorm vs PyTorch
+
+Two hand-written, `float4`-vectorized fused kernels over the last dimension of a
+2D tensor, each validated against torch and benchmarked against the equivalent
+torch op (10 warmup + 50 timed CUDA-event launches). Sources:
+[`src/fused/softmax.cu`](src/fused/softmax.cu),
+[`src/fused/layernorm.cu`](src/fused/layernorm.cu); full numbers in
+[`results/fused_results.csv`](results/fused_results.csv). These ops are
+memory bound, so the figure of merit is achieved HBM bandwidth (A100 peak ≈ 2 TB/s).
+
+| Op | Shape | Kernel GB/s | torch GB/s | Speedup | Max abs err |
+|----|-------|------------:|-----------:|--------:|------------:|
+| softmax   | 4096×1024  |   976 | 1025 | 0.95× | 1.9e-09 |
+| softmax   | 8192×2048  | 1,385 | 1321 | 1.05× | 9.3e-10 |
+| softmax   | 16384×4096 | 1,437 | 1206 | 1.19× | 4.7e-10 |
+| layernorm | 4096×1024  | 1,052 |  768 | 1.37× | 3.6e-07 |
+| layernorm | 8192×2048  | 1,484 | 1236 | 1.20× | 3.6e-07 |
+| layernorm | 16384×4096 | 1,496 | 1134 | 1.32× | 3.6e-07 |
+
+The kernels reach ~70–75% of the A100's HBM2e peak and **match or modestly beat torch
+at these shapes**. That is an honest but narrow claim: these are specialized
+**forward-only, FP32, 2D, last-dim** kernels, whereas torch's ops are general
+(autograd-ready, arbitrary dims/dtypes). The comparison is like-for-like on the forward
+pass only; it is not a claim of beating PyTorch in general. Validated against
+`torch.softmax` / `torch.nn.functional.layer_norm` (biased variance, eps=1e-5) within the
+same 1e-2 tolerance as the SGEMM ladder.
+
+Run with `python3 bench/bench_fused.py` (requires `torch`).
+
 ## Correctness
 
 Every kernel is validated before any timing number is reported. The reference is

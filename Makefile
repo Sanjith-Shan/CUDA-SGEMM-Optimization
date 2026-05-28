@@ -6,12 +6,20 @@ NVCCFLAGS := -O3 -std=c++17 -arch=$(ARCH)
 LDLIBS  := -lcublas
 
 BIN := sgemm
+FUSED := softmax layernorm
 
-.PHONY: all clean
-all: $(BIN)
+.PHONY: all fused clean
+all: $(BIN) fused
+fused: $(FUSED)
 
 $(BIN): src/sgemm/sgemm.cu src/sgemm/kernels.cuh
 	$(NVCC) $(NVCCFLAGS) src/sgemm/sgemm.cu -o $(BIN) $(LDLIBS)
 
+softmax: src/fused/softmax.cu
+	$(NVCC) $(NVCCFLAGS) src/fused/softmax.cu -o softmax
+
+layernorm: src/fused/layernorm.cu
+	$(NVCC) $(NVCCFLAGS) src/fused/layernorm.cu -o layernorm
+
 clean:
-	rm -f $(BIN)
+	rm -f $(BIN) $(FUSED)

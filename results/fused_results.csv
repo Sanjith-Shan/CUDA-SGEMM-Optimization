@@ -1,0 +1,13 @@
+# cuda-kernel-lab fused-kernel results
+# generated: 2026-05-28 23:41:12
+# gpu: NVIDIA A100-SXM4-80GB
+# torch: 2.8.0+cu128
+# reference: torch.softmax / torch.nn.functional.layer_norm
+# timing: 10 warmup + 50 timed CUDA-event launches
+op,rows,cols,kernel_mean_ms,kernel_gbps_mean,torch_mean_ms,speedup_mean,max_abs_err,max_rel_err,correct
+softmax,4096,1024,0.034394,975.60,0.032737,0.952,1.863e-09,2.704e-07,true
+softmax,8192,2048,0.096887,1385.30,0.101571,1.048,9.313e-10,2.815e-07,true
+softmax,16384,4096,0.373605,1437.00,0.445139,1.191,4.657e-10,2.912e-07,true
+layernorm,4096,1024,0.031903,1051.77,0.043698,1.370,3.576e-07,1.857e-07,true
+layernorm,8192,2048,0.090465,1483.64,0.108605,1.201,3.576e-07,1.935e-07,true
+layernorm,16384,4096,0.358900,1495.88,0.473343,1.319,3.576e-07,1.972e-07,true
