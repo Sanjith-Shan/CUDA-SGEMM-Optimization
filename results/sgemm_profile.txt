@@ -1,0 +1,29 @@
+cuda-kernel-lab : SGEMM profiling data (counter-free)
+Generated from actual runs on NVIDIA A100-SXM4-80GB, CUDA 12.8, cc 8.0
+Date: 2026-05-28
+
+NOTE: Nsight Compute (ncu) is installed but GPU performance counters are
+restricted on this box (ERR_NVGPUCTRPERM). Enabling them requires changing
+a host driver security setting / reloading the nvidia module on a shared
+GPU box, which was not done. The data below comes from ptxas (compile-time
+resource usage), the CUDA occupancy API, and measured GFLOPS vs known peaks
+-- all of which need no performance counters.
+
+=== ptxas per-kernel resource usage (sm_80) ===
+Compiling entry function '_Z18sgemm_2d_blocktileILj128ELj128ELj16ELj8ELj8EEviiifPKfS1_fPf'
+Used 124 registers, used 1 barriers, 16384 bytes smem, 400 bytes cmem[0]
+Compiling entry function '_Z18sgemm_1d_blocktileILj64ELj64ELj8ELj8EEviiifPKfS1_fPf'
+Used 46 registers, used 1 barriers, 4096 bytes smem, 400 bytes cmem[0]
+Compiling entry function '_Z16sgemm_smem_tiledILj32EEviiifPKfS1_fPf'
+Used 30 registers, used 1 barriers, 8192 bytes smem, 400 bytes cmem[0]
+Compiling entry function '_Z15sgemm_coalescedILj32EEviiifPKfS1_fPf'
+Used 32 registers, used 0 barriers, 400 bytes cmem[0]
+Compiling entry function '_Z11sgemm_naiveiiifPKfS0_fPf'
+Used 32 registers, used 0 barriers, 400 bytes cmem[0]
+
+=== Theoretical occupancy (CUDA occupancy API) ===
+{"kernel":"naive","block":1024,"max_blocks_per_sm":2,"active_warps":64,"max_warps":64,"theoretical_occupancy":1.000}
+{"kernel":"coalesced","block":1024,"max_blocks_per_sm":2,"active_warps":64,"max_warps":64,"theoretical_occupancy":1.000}
+{"kernel":"smem_tiled","block":1024,"max_blocks_per_sm":2,"active_warps":64,"max_warps":64,"theoretical_occupancy":1.000}
+{"kernel":"1d_blocktile","block":512,"max_blocks_per_sm":2,"active_warps":32,"max_warps":64,"theoretical_occupancy":0.500}
+{"kernel":"2d_blocktile","block":256,"max_blocks_per_sm":2,"active_warps":16,"max_warps":64,"theoretical_occupancy":0.250}

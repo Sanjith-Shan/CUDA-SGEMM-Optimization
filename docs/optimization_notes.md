@@ -116,6 +116,55 @@ that regime. This is expected tail behavior, reported rather than hidden.
 | 2d_blocktile | 15,529 | 1.5× | 87.6% | register/compute (near cuBLAS) |
 | cuBLAS FP32  | 17,720 | —    | 100%  | reference |
 
-Profiler-measured occupancy and memory-throughput numbers (Nsight Compute) are added in the
-Phase 5 section below once collected, to back this reasoning with hardware counters rather
-than first-principles argument alone.
+---
+
+## Phase 5 — profiling and the roofline verdict
+
+**On Nsight Compute (honest note).** `ncu` is installed on this box, but GPU performance
+counters are restricted (`ERR_NVGPUCTRPERM`). Lifting that requires changing a host driver
+security setting / reloading the `nvidia` module on a shared GPU box, which was not done.
+So the analysis below uses data that needs **no** performance counters: `ptxas` compile-time
+resource usage, the CUDA occupancy API, and measured GFLOPS against the A100's known peaks.
+Raw data is in [`../results/sgemm_profile.txt`](../results/sgemm_profile.txt).
+
+### Resource usage and occupancy (real, from ptxas + the occupancy API)
+
+| Rung | Threads/block | Registers/thread | Static smem/block | Max blocks/SM | Theoretical occupancy |
+|------|--------------:|-----------------:|------------------:|--------------:|----------------------:|
+| naive        | 1024 |  32 |     0 B | 2 | **100%** |
+| coalesced    | 1024 |  32 |     0 B | 2 | **100%** |
+| smem_tiled   | 1024 |  30 | 8,192 B | 2 | **100%** |
+| 1d_blocktile |  512 |  46 | 4,096 B | 2 | **50%** |
+| 2d_blocktile |  256 | 124 | 16,384 B | 2 | **25%** |
+
+No register spills in any kernel (the 2D kernel's 124 registers fit). On the A100, 64 KB of
+registers per SM and 2,048 threads/SM are the limiters: at 124 reg/thread the 2D kernel can
+only keep 16 warps resident.
+
+### The key insight: the fastest kernel has the *lowest* occupancy
+
+This is the headline of the profiling story. As the ladder climbs, occupancy *falls* — from
+100% (naive/coalesced/smem) to 50% (1D) to **25% (2D)** — yet performance rises monotonically.
+The 2D kernel deliberately spends registers (124/thread) on an 8×8 accumulator tile, which
+caps occupancy, but in return each thread issues 64 independent FMAs per inner step. That
+**instruction-level parallelism hides arithmetic and memory latency without needing many
+resident warps** — the classic lesson that on modern NVIDIA GPUs, high occupancy is a means,
+not the goal. SGEMM is won with register-level data reuse and ILP, even at low occupancy.
+
+### Roofline verdict (measured GFLOPS vs A100 ~19.5 TFLOPS FP32 peak)
+
+| Rung | GFLOPS @4096 | % of FP32 peak | Verdict |
+|------|-------------:|---------------:|---------|
+| naive        |    292 |  1.5% | memory bound, and uncoalesced — far below even the bandwidth roof |
+| coalesced    |  2,574 | 13.2% | memory bound, now using bandwidth efficiently (cache-assisted) |
+| smem_tiled   |  5,406 | 27.7% | shared-memory-throughput bound (AI ≈ 8, near the ~9.7 crossover) |
+| 1d_blocktile | 10,301 | 52.8% | compute/register bound — past the roofline knee |
+| 2d_blocktile | 15,529 | **79.6%** | compute/register bound, near the practical FP32 ceiling |
+| cuBLAS FP32  | 17,720 | 90.9% | reference |
+
+The progression is exactly the roofline narrative: the first two rungs climb the memory-bound
+slope (raising effective bandwidth utilization), shared tiling lifts arithmetic intensity
+through the knee, and the block-tiling rungs operate in the compute-bound regime where the
+A100's FP32 cores, not its memory system, set the limit. The last ~11 points to cuBLAS are
+the techniques beyond this ladder (software-pipelined double buffering, warp tiling, vectorized
+loads, autotuning).

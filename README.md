@@ -68,6 +68,21 @@ too few to fill the A100's 108 SMs, so the larger tiles lose to occupancy. This 
 expected small-matrix tail behavior, not a regression — the optimizations are designed
 to pay off on large matrices, which is exactly where the headline 4096 number sits.
 
+## Profiling & roofline
+
+Counter-free profiling (the box restricts GPU performance counters, so Nsight's
+hardware counters were unavailable — see the note in the optimization notes; the data
+below comes from `ptxas`, the CUDA occupancy API, and measured GFLOPS vs the A100's
+~19.5 TFLOPS FP32 peak). Raw data: [`results/sgemm_profile.txt`](results/sgemm_profile.txt).
+
+The headline finding: **the fastest kernel has the lowest occupancy.** As the ladder
+climbs, theoretical occupancy *falls* (100% → 50% → **25%** for the 2D kernel) while
+performance rises, because the 2D kernel spends registers (124/thread, no spills) on an
+8×8 accumulator tile and hides latency through instruction-level parallelism rather than
+many resident warps. As a % of FP32 peak the rungs read 1.5% → 13% → 28% → 53% → **80%**
+(2D) vs 91% for cuBLAS — the classic roofline progression from memory bound to compute
+bound. Full per-rung verdict in [`docs/optimization_notes.md`](docs/optimization_notes.md).
+
 ## Fused kernels: softmax & layernorm vs PyTorch
 
 Two hand-written, `float4`-vectorized fused kernels over the last dimension of a

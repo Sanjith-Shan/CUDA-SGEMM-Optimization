@@ -243,6 +243,49 @@ static int run_check(const std::string &kernel, int M, int N, int K,
   return EXIT_SUCCESS;
 }
 
+// Report theoretical occupancy for each rung from the CUDA occupancy API.
+// This needs no performance counters, so it works even where Nsight's hardware
+// counters are restricted. Occupancy = active warps / max warps per SM.
+static void print_occupancy() {
+  cudaDeviceProp prop;
+  CUDA_CHECK(cudaGetDeviceProperties(&prop, 0));
+  const int maxThreadsPerSM = prop.maxThreadsPerMultiProcessor;
+  const int warpsPerSM = maxThreadsPerSM / prop.warpSize;
+
+  struct Entry {
+    const char *name;
+    const void *func;
+    int block;
+  };
+  const Entry entries[] = {
+      {"naive", (const void *)sgemm_naive,
+       cfg::NAIVE_BLOCK * cfg::NAIVE_BLOCK},
+      {"coalesced", (const void *)sgemm_coalesced<cfg::COALESCE_BLOCK>,
+       cfg::COALESCE_BLOCK * cfg::COALESCE_BLOCK},
+      {"smem_tiled", (const void *)sgemm_smem_tiled<cfg::SMEM_TILE>,
+       cfg::SMEM_TILE * cfg::SMEM_TILE},
+      {"1d_blocktile",
+       (const void *)sgemm_1d_blocktile<cfg::BT1_BM, cfg::BT1_BN, cfg::BT1_BK,
+                                        cfg::BT1_TM>,
+       (cfg::BT1_BM * cfg::BT1_BN) / cfg::BT1_TM},
+      {"2d_blocktile",
+       (const void *)sgemm_2d_blocktile<cfg::BT2_BM, cfg::BT2_BN, cfg::BT2_BK,
+                                        cfg::BT2_TM, cfg::BT2_TN>,
+       (cfg::BT2_BM * cfg::BT2_BN) / (cfg::BT2_TM * cfg::BT2_TN)},
+  };
+  for (const auto &e : entries) {
+    int maxBlocks = 0;
+    CUDA_CHECK(cudaOccupancyMaxActiveBlocksPerMultiprocessor(
+        &maxBlocks, e.func, e.block, 0));
+    const double occ = (double)(maxBlocks * e.block) / maxThreadsPerSM;
+    printf(
+        "{\"kernel\":\"%s\",\"block\":%d,\"max_blocks_per_sm\":%d,"
+        "\"active_warps\":%d,\"max_warps\":%d,\"theoretical_occupancy\":%.3f}\n",
+        e.name, e.block, maxBlocks, maxBlocks * e.block / prop.warpSize,
+        warpsPerSM, occ);
+  }
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) {
     fprintf(stderr,
@@ -254,6 +297,11 @@ int main(int argc, char **argv) {
 
   if (strcmp(argv[1], "--device-info") == 0) {
     print_device_info();
+    return EXIT_SUCCESS;
+  }
+
+  if (strcmp(argv[1], "--occupancy") == 0) {
+    print_occupancy();
     return EXIT_SUCCESS;
   }
 
