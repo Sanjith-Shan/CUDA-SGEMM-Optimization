@@ -146,6 +146,103 @@ static void print_device_info() {
       d.runtime / 1000, (d.runtime % 100) / 10);
 }
 
+// Map a kernel name to its launcher (or a cuBLAS math mode). Returns false on
+// an unknown name. Shared by the timing path and the --check path.
+static bool resolve(const std::string &kernel, LaunchFn *fn, bool *is_cublas,
+                    cublasMath_t *mode) {
+  *fn = nullptr;
+  *is_cublas = false;
+  *mode = CUBLAS_DEFAULT_MATH;
+  if (kernel == "naive")
+    *fn = launch_naive;
+  else if (kernel == "coalesced")
+    *fn = launch_coalesced;
+  else if (kernel == "smem_tiled")
+    *fn = launch_smem;
+  else if (kernel == "1d_blocktile")
+    *fn = launch_1d;
+  else if (kernel == "2d_blocktile")
+    *fn = launch_2d;
+  else if (kernel == "cublas") {
+    *is_cublas = true;
+    *mode = CUBLAS_PEDANTIC_MATH;
+  } else if (kernel == "cublas_tf32") {
+    *is_cublas = true;
+    *mode = CUBLAS_TF32_TENSOR_OP_MATH;
+  } else {
+    return false;
+  }
+  return true;
+}
+
+static std::vector<float> read_raw(const char *path, size_t n) {
+  std::vector<float> v(n);
+  FILE *f = fopen(path, "rb");
+  if (!f) {
+    fprintf(stderr, "cannot open %s\n", path);
+    exit(EXIT_FAILURE);
+  }
+  if (fread(v.data(), sizeof(float), n, f) != n) {
+    fprintf(stderr, "short read on %s\n", path);
+    exit(EXIT_FAILURE);
+  }
+  fclose(f);
+  return v;
+}
+
+// Run one kernel on caller-supplied A,B (from files) and write C. Used by
+// verify.py to compare against an independent NumPy float64 reference.
+static int run_check(const std::string &kernel, int M, int N, int K,
+                     const char *aPath, const char *bPath, const char *cPath) {
+  LaunchFn fn;
+  bool is_cublas;
+  cublasMath_t mode;
+  if (!resolve(kernel, &fn, &is_cublas, &mode)) {
+    fprintf(stderr, "unknown kernel: %s\n", kernel.c_str());
+    return EXIT_FAILURE;
+  }
+  const float alpha = 1.0f, beta = 0.0f;
+  const size_t szA = (size_t)M * K, szB = (size_t)K * N, szC = (size_t)M * N;
+  std::vector<float> hA = read_raw(aPath, szA);
+  std::vector<float> hB = read_raw(bPath, szB);
+  std::vector<float> hC(szC);
+
+  float *dA, *dB, *dC;
+  CUDA_CHECK(cudaMalloc(&dA, szA * sizeof(float)));
+  CUDA_CHECK(cudaMalloc(&dB, szB * sizeof(float)));
+  CUDA_CHECK(cudaMalloc(&dC, szC * sizeof(float)));
+  CUDA_CHECK(cudaMemcpy(dA, hA.data(), szA * sizeof(float),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemcpy(dB, hB.data(), szB * sizeof(float),
+                        cudaMemcpyHostToDevice));
+  CUDA_CHECK(cudaMemset(dC, 0, szC * sizeof(float)));
+
+  if (is_cublas) {
+    cublasHandle_t handle;
+    CUBLAS_CHECK(cublasCreate(&handle));
+    cublas_sgemm(handle, mode, M, N, K, alpha, dA, dB, beta, dC);
+    CUBLAS_CHECK(cublasDestroy(handle));
+  } else {
+    fn(M, N, K, alpha, dA, dB, beta, dC);
+  }
+  CUDA_CHECK(cudaGetLastError());
+  CUDA_CHECK(cudaDeviceSynchronize());
+  CUDA_CHECK(cudaMemcpy(hC.data(), dC, szC * sizeof(float),
+                        cudaMemcpyDeviceToHost));
+
+  FILE *f = fopen(cPath, "wb");
+  if (!f) {
+    fprintf(stderr, "cannot open %s for write\n", cPath);
+    return EXIT_FAILURE;
+  }
+  fwrite(hC.data(), sizeof(float), szC, f);
+  fclose(f);
+  CUDA_CHECK(cudaFree(dA));
+  CUDA_CHECK(cudaFree(dB));
+  CUDA_CHECK(cudaFree(dC));
+  return EXIT_SUCCESS;
+}
+
 int main(int argc, char **argv) {
   if (argc < 2) {
     fprintf(stderr,
@@ -158,6 +255,21 @@ int main(int argc, char **argv) {
   if (strcmp(argv[1], "--device-info") == 0) {
     print_device_info();
     return EXIT_SUCCESS;
+  }
+
+  // File-based verification mode for an independent (NumPy) reference:
+  //   --check <kernel> <M> <N> <K> <Afile> <Bfile> <Cout>
+  // Reads raw little-endian float32 A and B, runs the kernel once, writes C.
+  if (strcmp(argv[1], "--check") == 0) {
+    if (argc != 9) {
+      fprintf(stderr,
+              "usage: %s --check <kernel> <M> <N> <K> <Afile> <Bfile> "
+              "<Cout>\n",
+              argv[0]);
+      return EXIT_FAILURE;
+    }
+    return run_check(argv[2], atoi(argv[3]), atoi(argv[4]), atoi(argv[5]),
+                     argv[6], argv[7], argv[8]);
   }
 
   const std::string kernel = argv[1];
@@ -212,23 +324,7 @@ int main(int argc, char **argv) {
   LaunchFn fn = nullptr;
   cublasMath_t cublas_mode = CUBLAS_DEFAULT_MATH;
   bool is_cublas = false;
-  if (kernel == "naive")
-    fn = launch_naive;
-  else if (kernel == "coalesced")
-    fn = launch_coalesced;
-  else if (kernel == "smem_tiled")
-    fn = launch_smem;
-  else if (kernel == "1d_blocktile")
-    fn = launch_1d;
-  else if (kernel == "2d_blocktile")
-    fn = launch_2d;
-  else if (kernel == "cublas") {
-    is_cublas = true;
-    cublas_mode = CUBLAS_PEDANTIC_MATH;
-  } else if (kernel == "cublas_tf32") {
-    is_cublas = true;
-    cublas_mode = CUBLAS_TF32_TENSOR_OP_MATH;
-  } else {
+  if (!resolve(kernel, &fn, &is_cublas, &cublas_mode)) {
     fprintf(stderr, "unknown kernel: %s\n", kernel.c_str());
     return EXIT_FAILURE;
   }
@@ -248,14 +344,18 @@ int main(int argc, char **argv) {
   CUDA_CHECK(cudaMemcpy(hOut.data(), dC, szC * sizeof(float),
                         cudaMemcpyDeviceToHost));
 
-  double max_abs = 0.0, max_rel = 0.0;
+  // Normwise relative error: max|C-Cref| / max|Cref| (infinity-norm relative).
+  // Per-element relative error is ill-posed for a random GEMM because output
+  // entries can be ~0 from cancellation; normalizing by the largest reference
+  // magnitude gives a well-defined error at the scale of the result.
+  double max_abs = 0.0, max_ref = 0.0;
   for (size_t i = 0; i < szC; ++i) {
-    double ref = hRef[i], got = hOut[i];
-    double abs_err = fabs(got - ref);
-    double rel_err = abs_err / (fabs(ref) + 1e-8);
+    double abs_err = fabs((double)hOut[i] - (double)hRef[i]);
     if (abs_err > max_abs) max_abs = abs_err;
-    if (rel_err > max_rel) max_rel = rel_err;
+    double a = fabs((double)hRef[i]);
+    if (a > max_ref) max_ref = a;
   }
+  const double max_rel = max_abs / (max_ref + 1e-30);
   // cublas_tf32 is a lower-precision baseline, not a kernel under test; its
   // error vs pedantic FP32 is expected and reported for context, not gated.
   const bool gated = (kernel != "cublas_tf32");
