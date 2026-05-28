@@ -1,0 +1,14 @@
+# Build artifacts
+/sgemm
+/build/
+*.o
+*.obj
+
+# Nsight profiler output
+*.ncu-rep
+results/*.ncu-rep
+
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
