@@ -1,11 +1,6 @@
 # CUDA SGEMM Optimization
 
-A CUDA performance-engineering project: a hand-written **SGEMM** (single-precision
-matrix multiply) optimization ladder that climbs from a naive kernel to a register
-block-tiled kernel reaching **87.6% of cuBLAS** on an NVIDIA A100, with every rung
-validated for correctness and benchmarked against the vendor baseline with measured
-numbers. The point is the *ladder*: each rung adds exactly one optimization, and the
-measured jump is the evidence that it worked.
+A hand-written CUDA SGEMM that begins as a naive one-thread-per-element kernel and is optimized one idea at a time until it reaches **87.6%** of cuBLAS single-precision throughput on an NVIDIA A100. The project is built as a ladder where each rung adds exactly one optimization, moving from global-memory coalescing through shared-memory tiling to 2D register blocking, and the measured speedup at each step is the evidence the optimization worked. Every rung is validated for correctness against both pedantic-FP32 cuBLAS and an independent NumPy float64 cross-check, and every figure in this README traces to an actual run captured in results on the hardware named below, with nothing rounded or estimated.
 
 All numbers below come from actual runs captured in [`results/`](results/) on the
 hardware named at the bottom. Nothing is rounded up or estimated.
