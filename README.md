@@ -1,4 +1,4 @@
-# cuda-kernel-lab
+# CUDA SGEMM Optimization
 
 A CUDA performance-engineering project: a hand-written **SGEMM** (single-precision
 matrix multiply) optimization ladder that climbs from a naive kernel to a register
